@@ -1,0 +1,55 @@
+{
+  "expo": {
+    "name": "controlaroupinhas",
+    "slug": "controlaroupinhas",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.RECORD_AUDIO"
+      ]
+    },
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "O app precisa acessar suas fotos para adicionar roupas.",
+          "cameraPermission": "O app precisa acessar sua câmera para fotografar roupas."
+        }
+      ]
+    ],
+    "scheme": "controlaroupinhas",
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b60fb74d-5341-4480-a7a7-1feb62d16d69"
+      }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/b60fb74d-5341-4480-a7a7-1feb62d16d69"
+    }
+  }
+}
