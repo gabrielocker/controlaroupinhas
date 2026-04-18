@@ -1,17 +1,17 @@
-import { useState, useCallback } from 'react';
+﻿import { useState, useCallback } from 'react';
 import {
-  View, Text, FlatList, Image, TouchableOpacity,
-  StyleSheet, Dimensions, Alert, ScrollView,
+  View, Text, TextInput, FlatList, Image, TouchableOpacity,
+  StyleSheet, Dimensions, ScrollView, Modal,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import {
-  getClothingPaginated, getTotalPages, registerUse, ClothingItem,
+  getClothingPaginated, getTotalPages, registerUse, searchClothes, ClothingItem,
 } from '../../src/database/clothes';
 import { getAllCategories, Category } from '../../src/database/categories';
 
 const NUM_COLUMNS = 5;
-const PAGE_SIZE = NUM_COLUMNS * 20; // 20 rows x 5 columns = 100
+const PAGE_SIZE = NUM_COLUMNS * 20;
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const ITEM_SIZE = SCREEN_WIDTH / NUM_COLUMNS - 4;
 
@@ -20,21 +20,30 @@ export default function HomeScreen() {
   const [clothes, setClothes] = useState<ClothingItem[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<number[]>([]);
+  const [query, setQuery] = useState('');
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
 
-  const loadData = useCallback(async (p: number, catIds: number[]) => {
+  const loadData = useCallback(async (p: number, catIds: number[], search: string) => {
     setLoading(true);
     try {
-      const [items, total, cats] = await Promise.all([
-        getClothingPaginated(p, catIds, PAGE_SIZE),
-        getTotalPages(catIds, PAGE_SIZE),
-        getAllCategories(),
-      ]);
-      setClothes(items);
-      setTotalPages(total);
+      const cats = await getAllCategories();
       setCategories(cats);
+
+      if (search.trim()) {
+        const items = await searchClothes(search.trim(), catIds);
+        setClothes(items);
+        setTotalPages(1);
+      } else {
+        const [items, total] = await Promise.all([
+          getClothingPaginated(p, catIds, PAGE_SIZE),
+          getTotalPages(catIds, PAGE_SIZE),
+        ]);
+        setClothes(items);
+        setTotalPages(total);
+      }
     } finally {
       setLoading(false);
     }
@@ -42,8 +51,8 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      loadData(page, selectedCategories);
-    }, [page, selectedCategories])
+      loadData(page, selectedCategories, query);
+    }, [page, selectedCategories, query])
   );
 
   const toggleCategory = (id: number) => {
@@ -54,9 +63,15 @@ export default function HomeScreen() {
     });
   };
 
+  const clearFilters = () => {
+    setQuery('');
+    setSelectedCategories([]);
+    setPage(1);
+  };
+
   const handleUse = async (item: ClothingItem) => {
     await registerUse(item.id);
-    loadData(page, selectedCategories);
+    loadData(page, selectedCategories, query);
   };
 
   const renderItem = ({ item }: { item: ClothingItem }) => (
@@ -79,37 +94,75 @@ export default function HomeScreen() {
     </TouchableOpacity>
   );
 
+  const hasActiveFilters = selectedCategories.length > 0 || query.trim().length > 0;
+
   return (
     <View style={styles.container}>
-      {/* Category Filters */}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={styles.filterBar}
-        contentContainerStyle={styles.filterContent}
-      >
-        {categories.map(cat => (
-          <TouchableOpacity
-            key={cat.id}
-            style={[
-              styles.filterChip,
-              selectedCategories.includes(cat.id) && styles.filterChipActive,
-            ]}
-            onPress={() => toggleCategory(cat.id)}
-          >
-            <Text
-              style={[
-                styles.filterChipText,
-                selectedCategories.includes(cat.id) && styles.filterChipTextActive,
-              ]}
-            >
-              {cat.name}
-            </Text>
+      <View style={styles.topRow}>
+        <View style={styles.searchBar}>
+          <Ionicons name="search" size={18} color="#999" />
+          <TextInput
+            style={styles.input}
+            placeholder="Buscar por tÃ­tulo..."
+            value={query}
+            onChangeText={text => { setQuery(text); setPage(1); }}
+            returnKeyType="search"
+          />
+        </View>
+        <TouchableOpacity style={styles.filterToggle} onPress={() => setMenuOpen(true)}>
+          <Ionicons name="options" size={20} color="#fff" />
+          {selectedCategories.length > 0 && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>{selectedCategories.length}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+        {hasActiveFilters && (
+          <TouchableOpacity style={styles.clearButton} onPress={clearFilters}>
+            <Ionicons name="close-circle" size={20} color="#fff" />
           </TouchableOpacity>
-        ))}
-      </ScrollView>
+        )}
+      </View>
 
-      {/* Grid */}
+      <Modal visible={menuOpen} transparent animationType="fade">
+        <TouchableOpacity
+          style={styles.overlay}
+          activeOpacity={1}
+          onPress={() => setMenuOpen(false)}
+        >
+          <View style={styles.menuContainer}>
+            <Text style={styles.menuTitle}>Filtrar Categorias</Text>
+            <ScrollView style={styles.menuScroll}>
+              {categories.map(cat => (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={[
+                    styles.menuItem,
+                    selectedCategories.includes(cat.id) && styles.menuItemActive,
+                  ]}
+                  onPress={() => toggleCategory(cat.id)}
+                >
+                  <Text
+                    style={[
+                      styles.menuItemText,
+                      selectedCategories.includes(cat.id) && styles.menuItemTextActive,
+                    ]}
+                  >
+                    {cat.name}
+                  </Text>
+                  {selectedCategories.includes(cat.id) && (
+                    <Ionicons name="checkmark" size={18} color="#fff" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            <TouchableOpacity style={styles.menuClose} onPress={() => setMenuOpen(false)}>
+              <Text style={styles.menuCloseText}>Fechar</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <FlatList
         data={clothes}
         renderItem={renderItem}
@@ -124,24 +177,24 @@ export default function HomeScreen() {
         }
       />
 
-      {/* Pagination */}
-      <View style={styles.pagination}>
-        <TouchableOpacity
-          onPress={() => setPage(p => Math.max(1, p - 1))}
-          disabled={page <= 1}
-        >
-          <Ionicons name="chevron-back" size={28} color={page <= 1 ? '#ccc' : '#5B4CDB'} />
-        </TouchableOpacity>
-        <Text style={styles.pageText}>{page} / {totalPages}</Text>
-        <TouchableOpacity
-          onPress={() => setPage(p => Math.min(totalPages, p + 1))}
-          disabled={page >= totalPages}
-        >
-          <Ionicons name="chevron-forward" size={28} color={page >= totalPages ? '#ccc' : '#5B4CDB'} />
-        </TouchableOpacity>
-      </View>
+      {!query.trim() && (
+        <View style={styles.pagination}>
+          <TouchableOpacity
+            onPress={() => setPage(p => Math.max(1, p - 1))}
+            disabled={page <= 1}
+          >
+            <Ionicons name="chevron-back" size={28} color={page <= 1 ? '#ccc' : '#5B4CDB'} />
+          </TouchableOpacity>
+          <Text style={styles.pageText}>{page} / {totalPages}</Text>
+          <TouchableOpacity
+            onPress={() => setPage(p => Math.min(totalPages, p + 1))}
+            disabled={page >= totalPages}
+          >
+            <Ionicons name="chevron-forward" size={28} color={page >= totalPages ? '#ccc' : '#5B4CDB'} />
+          </TouchableOpacity>
+        </View>
+      )}
 
-      {/* FAB */}
       <TouchableOpacity
         style={styles.fab}
         onPress={() => router.push('/add')}
@@ -154,15 +207,56 @@ export default function HomeScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f5f5f5' },
-  filterBar: { maxHeight: 50, backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee' },
-  filterContent: { alignItems: 'center', paddingHorizontal: 8, gap: 6 },
-  filterChip: {
-    paddingHorizontal: 12, paddingVertical: 6, borderRadius: 16,
-    backgroundColor: '#eee', marginRight: 6,
+  topRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 10, paddingVertical: 8,
+    backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#eee',
+    gap: 8,
   },
-  filterChipActive: { backgroundColor: '#5B4CDB' },
-  filterChipText: { fontSize: 12, color: '#333' },
-  filterChipTextActive: { color: '#fff' },
+  searchBar: {
+    flex: 1, flexDirection: 'row', alignItems: 'center',
+    backgroundColor: '#f0f0f0', paddingHorizontal: 10,
+    borderRadius: 10, height: 40,
+  },
+  input: { flex: 1, height: 40, marginLeft: 6, fontSize: 14 },
+  filterToggle: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#5B4CDB', justifyContent: 'center', alignItems: 'center',
+  },
+  clearButton: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: '#FF3B30', justifyContent: 'center', alignItems: 'center',
+  },
+  badge: {
+    position: 'absolute', top: -4, right: -4,
+    backgroundColor: '#FF3B30', borderRadius: 10,
+    minWidth: 20, height: 20, justifyContent: 'center', alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  badgeText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  menuContainer: {
+    width: '80%', maxHeight: '70%', backgroundColor: '#fff',
+    borderRadius: 16, padding: 16,
+  },
+  menuTitle: { fontSize: 18, fontWeight: 'bold', color: '#333', marginBottom: 12, textAlign: 'center' },
+  menuScroll: { maxHeight: 400 },
+  menuItem: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    paddingVertical: 12, paddingHorizontal: 16, borderRadius: 10,
+    backgroundColor: '#f0f0f0', marginBottom: 6,
+  },
+  menuItemActive: { backgroundColor: '#5B4CDB' },
+  menuItemText: { fontSize: 15, color: '#333' },
+  menuItemTextActive: { color: '#fff', fontWeight: '600' },
+  menuClose: {
+    marginTop: 12, paddingVertical: 12, borderRadius: 10,
+    backgroundColor: '#5B4CDB', alignItems: 'center',
+  },
+  menuCloseText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   grid: { padding: 2 },
   card: {
     width: ITEM_SIZE, height: ITEM_SIZE * 1.3, margin: 2,

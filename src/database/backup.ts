@@ -1,108 +1,135 @@
-import { File, Paths } from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
-import * as DocumentPicker from 'expo-document-picker';
-import { getDatabase } from './db';
+import { Platform } from 'react-native';
+import { supabase } from '../lib/supabase';
 
-export async function exportBackup(): Promise<void> {
-  const db = await getDatabase();
+async function getBackupData() {
+  const { data: categories } = await supabase.from('categories').select('*');
+  const { data: clothes } = await supabase.from('clothes').select('*');
+  const { data: clothesCategories } = await supabase.from('clothes_categories').select('*');
+  const { data: usageLog } = await supabase.from('usage_log').select('*');
+  const { data: looks } = await supabase.from('looks').select('*');
+  const { data: lookItems } = await supabase.from('look_items').select('*');
 
-  const categories = await db.getAllAsync('SELECT * FROM categories');
-  const clothes = await db.getAllAsync('SELECT * FROM clothes');
-  const clothesCategories = await db.getAllAsync('SELECT * FROM clothes_categories');
-  const usageLog = await db.getAllAsync('SELECT * FROM usage_log');
-
-  // Export images as base64
-  const clothesWithImages = [];
-  for (const item of clothes as any[]) {
-    let imageBase64 = '';
-    try {
-      const imgFile = new File(item.image_path);
-      imageBase64 = await imgFile.base64();
-    } catch {
-      // Image may have been deleted
-    }
-    clothesWithImages.push({ ...item, image_base64: imageBase64 });
-  }
-
-  const backup = {
-    version: 1,
+  return {
+    version: 3,
     exported_at: new Date().toISOString(),
     categories,
-    clothes: clothesWithImages,
+    clothes,
     clothes_categories: clothesCategories,
     usage_log: usageLog,
+    looks,
+    look_items: lookItems,
   };
+}
 
-  const backupFile = new File(Paths.document, 'backup_roupinhas.json');
-  backupFile.write(JSON.stringify(backup));
-  await Sharing.shareAsync(backupFile.uri, { mimeType: 'application/json' });
+export async function exportBackup(): Promise<void> {
+  const backup = await getBackupData();
+  const jsonString = JSON.stringify(backup);
+
+  if (Platform.OS === 'web') {
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'backup_roupinhas.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  } else {
+    const { File, Paths } = require('expo-file-system');
+    const Sharing = require('expo-sharing');
+    const backupFile = new File(Paths.document, 'backup_roupinhas.json');
+    backupFile.write(jsonString);
+    await Sharing.shareAsync(backupFile.uri, { mimeType: 'application/json' });
+  }
+}
+
+function readFileWeb(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) { reject(new Error('Nenhum arquivo selecionado')); return; }
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(reader.error);
+      reader.readAsText(file);
+    };
+    input.click();
+  });
 }
 
 export async function importBackup(): Promise<boolean> {
-  const result = await DocumentPicker.getDocumentAsync({
-    type: 'application/json',
-    copyToCacheDirectory: true,
-  });
+  let content: string;
 
-  if (result.canceled) return false;
+  if (Platform.OS === 'web') {
+    content = await readFileWeb();
+  } else {
+    const { File } = require('expo-file-system');
+    const DocumentPicker = require('expo-document-picker');
+    const result = await DocumentPicker.getDocumentAsync({
+      type: 'application/json',
+      copyToCacheDirectory: true,
+    });
+    if (result.canceled) return false;
+    const sourceFile = new File(result.assets[0].uri);
+    content = await sourceFile.text();
+  }
 
-  const pickedFile = result.assets[0];
-  const sourceFile = new File(pickedFile.uri);
-  const content = await sourceFile.text();
   const backup = JSON.parse(content);
 
   if (!backup.version || !backup.categories || !backup.clothes) {
     throw new Error('Arquivo de backup inválido');
   }
 
-  const db = await getDatabase();
-
-  // Clear existing data
-  await db.execAsync('DELETE FROM usage_log');
-  await db.execAsync('DELETE FROM clothes_categories');
-  await db.execAsync('DELETE FROM clothes');
-  await db.execAsync('DELETE FROM categories');
+  // Clear existing data (order matters for foreign keys)
+  await supabase.from('look_items').delete().neq('look_id', -1);
+  await supabase.from('looks').delete().neq('id', -1);
+  await supabase.from('usage_log').delete().neq('id', -1);
+  await supabase.from('clothes_categories').delete().neq('clothing_id', -1);
+  await supabase.from('clothes').delete().neq('id', -1);
+  await supabase.from('categories').delete().neq('id', -1);
 
   // Restore categories
-  for (const cat of backup.categories) {
-    await db.runAsync(
-      'INSERT INTO categories (id, name) VALUES (?, ?)',
-      [cat.id, cat.name]
-    );
+  if (backup.categories?.length > 0) {
+    const { error } = await supabase.from('categories').insert(backup.categories);
+    if (error) throw error;
   }
 
-  // Restore clothes and images
-  for (const item of backup.clothes) {
-    let imagePath = item.image_path;
-
-    if (item.image_base64) {
-      const filename = `clothing_${item.id}_${Date.now()}.jpg`;
-      const destFile = new File(Paths.document, filename);
-      const bytes = Uint8Array.from(atob(item.image_base64), c => c.charCodeAt(0));
-      destFile.write(bytes);
-      imagePath = destFile.uri;
-    }
-
-    await db.runAsync(
-      'INSERT INTO clothes (id, title, image_path, created_at) VALUES (?, ?, ?, ?)',
-      [item.id, item.title, imagePath, item.created_at]
-    );
+  // Restore clothes (images are URLs in v3, or may have base64 in v2)
+  if (backup.clothes?.length > 0) {
+    const clothesRows = backup.clothes.map((item: any) => ({
+      id: item.id,
+      title: item.title,
+      image_path: item.image_path,
+      created_at: item.created_at,
+    }));
+    const { error } = await supabase.from('clothes').insert(clothesRows);
+    if (error) throw error;
   }
 
   // Restore relations
-  for (const cc of backup.clothes_categories) {
-    await db.runAsync(
-      'INSERT INTO clothes_categories (clothing_id, category_id) VALUES (?, ?)',
-      [cc.clothing_id, cc.category_id]
-    );
+  if (backup.clothes_categories?.length > 0) {
+    const { error } = await supabase.from('clothes_categories').insert(backup.clothes_categories);
+    if (error) throw error;
   }
 
   // Restore usage log
-  for (const log of backup.usage_log) {
-    await db.runAsync(
-      'INSERT INTO usage_log (id, clothing_id, used_at) VALUES (?, ?, ?)',
-      [log.id, log.clothing_id, log.used_at]
-    );
+  if (backup.usage_log?.length > 0) {
+    const { error } = await supabase.from('usage_log').insert(backup.usage_log);
+    if (error) throw error;
+  }
+
+  // Restore looks
+  if (backup.looks?.length > 0) {
+    const { error } = await supabase.from('looks').insert(backup.looks);
+    if (error) throw error;
+  }
+
+  // Restore look items
+  if (backup.look_items?.length > 0) {
+    const { error } = await supabase.from('look_items').insert(backup.look_items);
+    if (error) throw error;
   }
 
   return true;

@@ -4,11 +4,10 @@ import {
   StyleSheet, Alert, ScrollView, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { File, Paths } from 'expo-file-system';
 import { useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { getAllCategories, Category } from '../src/database/categories';
-import { addClothing } from '../src/database/clothes';
+import { addClothing, uploadClothingImage } from '../src/database/clothes';
 
 export default function AddClothingScreen() {
   const router = useRouter();
@@ -72,15 +71,10 @@ export default function AddClothingScreen() {
 
     setSaving(true);
     try {
-      // Copy image to app's document directory for persistence
-      const filename = `clothing_${Date.now()}.jpg`;
-      const source = new File(imageUri);
-      const bytes = source.bytesSync();
-      const dest = new File(Paths.document, filename);
-      dest.write(bytes);
-      const destPath = dest.uri;
+      // Upload image to Supabase Storage
+      const imageUrl = await uploadClothingImage(imageUri);
 
-      await addClothing(title.trim(), destPath, selectedCategories);
+      await addClothing(title.trim(), imageUrl, selectedCategories);
       router.back();
     } catch (err: any) {
       Alert.alert('Erro', 'Não foi possível salvar: ' + err.message);

@@ -1,4 +1,4 @@
-import { getDatabase } from './db';
+import { supabase } from '../lib/supabase';
 
 export interface Category {
   id: number;
@@ -6,17 +6,28 @@ export interface Category {
 }
 
 export async function getAllCategories(): Promise<Category[]> {
-  const db = await getDatabase();
-  return db.getAllAsync<Category>('SELECT * FROM categories ORDER BY name');
+  const { data, error } = await supabase
+    .from('categories')
+    .select('id, name')
+    .order('name');
+  if (error) throw error;
+  return data as Category[];
 }
 
 export async function createCategory(name: string): Promise<number> {
-  const db = await getDatabase();
-  const result = await db.runAsync('INSERT INTO categories (name) VALUES (?)', [name.trim()]);
-  return result.lastInsertRowId;
+  const { data, error } = await supabase
+    .from('categories')
+    .insert({ name: name.trim() })
+    .select('id')
+    .single();
+  if (error) throw error;
+  return data.id;
 }
 
 export async function deleteCategory(id: number): Promise<void> {
-  const db = await getDatabase();
-  await db.runAsync('DELETE FROM categories WHERE id = ?', [id]);
+  const { error } = await supabase
+    .from('categories')
+    .delete()
+    .eq('id', id);
+  if (error) throw error;
 }
